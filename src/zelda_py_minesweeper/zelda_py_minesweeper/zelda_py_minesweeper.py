@@ -2,13 +2,24 @@ import rclpy
 from rclpy.node import Node
 import rclpy
 
+from sensor_msgs.msg import Image
+from rclpy import qos
+
 
 class MineSweeper(Node):
 
     def __init__(self):
         super().__init__('minesweeper')
 
-        self.get_logger().info("Minesweeper node has been started")
+        self.camera_subscription = self.create_subscription(
+            Image,
+            '/camera/color/image_raw',
+            self.image_callback,
+            qos.qos_profile_sensor_data
+        )
+
+    def image_callback(self, msg):
+        self.get_logger().info('I heard: "%s"' % msg.data)
 
 
 def main(args=None):
