@@ -32,9 +32,28 @@ class MineSweeper(Node):
         yellowUpper = (64, 255, 255)
         mask = cv2.inRange(hsv, yellowLower, yellowUpper)
 
+        self.detect_lines(hsv)
+
         # ret, thresh = cv2.threshold(hsv,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
         # output = cv2.connectedComponentsWithStats(thresh, 8, cv2.CV_32S)
-        cv2.imshow("Image Window", mask)
+        cv2.imshow("Image", cv_image)
+        cv2.waitKey(3)
+        cv2.imshow("Mask", mask)
+        cv2.waitKey(3)
+
+    def detect_lines(self, hsv):
+        redLower1 = (160, 100, 100)
+        redUpper1 = (180, 255, 255)
+
+        redLower2 = (0, 100, 100)
+        redUpper1 = (20, 255, 255)
+
+        mask1 = cv2.inRange(hsv, redLower1, redUpper1)
+        mask2 = cv2.inRange(hsv, redLower2, redUpper1)
+
+        mask = mask1 + mask2
+
+        cv2.imshow("Red Mask", mask)
         cv2.waitKey(3)
 
 
