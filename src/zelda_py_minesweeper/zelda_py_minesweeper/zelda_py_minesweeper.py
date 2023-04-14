@@ -41,8 +41,10 @@ class MineSweeper(Node):
         print(centroids)
 
         for x, y in centroids:
+            x = int(x)
+            y = int(y)
             if not math.isnan(x) and not math.isnan(y): #avoids nan's
-                cv2.circle(cv_image, (x ,y), 2, (0, 255, 255), 2)
+                cv2.circle(cv_image, (x ,y), 2, (255, 0, 0), 2)
 
         # ret, thresh = cv2.threshold(hsv,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
         # output = cv2.connectedComponentsWithStats(thresh, 8, cv2.CV_32S)
