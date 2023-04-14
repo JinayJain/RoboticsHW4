@@ -26,32 +26,27 @@ class MineSweeper(Node):
     def image_callback(self, msg):
         # self.get_logger().info('I heard: "%s"' % msg.data)
 
-        cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+        img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
-        yellowLower = (29, 100, 100)
-        yellowUpper = (64, 255, 255)
+        (numLabels, labels, stats, centroids) = self.detect_balls(img)
+
+        cv2.imshow("Image", img)
+        cv2.waitKey(3)
+
+    def detect_balls(self, img):
+        img = cv2.GaussianBlur(img, (15, 15), 0)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        cv2.imshow("HSV", hsv)
+
+        yellowLower = (25, 100, 100)
+        yellowUpper = (80, 255, 255)
         mask = cv2.inRange(hsv, yellowLower, yellowUpper)
-        
-        self.detect_lines(hsv)
+        mask = cv2.erode(mask, None, iterations=2)
+        mask = cv2.dilate(mask, None, iterations=2)
 
-        thresh = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-        output = cv2.connectedComponentsWithStats(thresh, 8, cv2.CV_32S)
-        (numLabels, labels, stats, centroids) = output
-        print(centroids)
-
-        for x, y in centroids:
-            x = int(x)
-            y = int(y)
-            if not math.isnan(x) and not math.isnan(y): #avoids nan's
-                cv2.circle(cv_image, (x ,y), 2, (255, 0, 0), 2)
-
-        # ret, thresh = cv2.threshold(hsv,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        # output = cv2.connectedComponentsWithStats(thresh, 8, cv2.CV_32S)
-        cv2.imshow("Image", cv_image)
-        cv2.waitKey(3)
-        cv2.imshow("Mask", mask)
-        cv2.waitKey(3)
+        output = cv2.connectedComponentsWithStats(mask, 8, cv2.CV_32S)
+        return output
 
     def detect_lines(self, hsv):
         redLower1 = (160, 100, 100)
