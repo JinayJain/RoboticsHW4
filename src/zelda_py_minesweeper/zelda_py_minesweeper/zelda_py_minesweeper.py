@@ -4,12 +4,21 @@ import rclpy
 from rclpy import qos
 
 from sensor_msgs.msg import Image
+from geometry_msgs.msg import Twist
+from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector
 from cv_bridge import CvBridge
 
 import cv2
 import math
 import numpy as np
-import signal, sys
+import signal
+import sys
+
+
+TIMER_INTERVAL = 0.1  # seconds
+
+TURN_POWER = 0.5
+TURN_MAX = 0.6
 
 
 class MineSweeper(Node):
@@ -24,7 +33,43 @@ class MineSweeper(Node):
             self.image_callback,
             qos.qos_profile_sensor_data
         )
+        self.camera_subscription  # prevent unused variable warning
 
+        self.move_publisher = self.create_publisher(Twist, 'zelda/cmd_vel', 10)
+        self.move_timer = self.create_timer(
+            TIMER_INTERVAL,
+            self.move_timer_callback
+        )
+
+        self.hazard_subscription = self.create_subscription(
+            HazardDetectionVector,
+            'zelda/hazard_detection',
+            self.hazard_callback,
+            qos.qos_profile_sensor_data)
+        self.hazard_subscription  # prevent unused variable warning
+
+        self.move_state = "forward"
+        self.turn = 0.0
+
+    def hazard_callback(self, haz: HazardDetectionVector):
+        for hazard in haz.detections:
+            if hazard.type == HazardDetection.BUMP:
+                self.move_state = "stop"
+
+                # stop the robot
+                twist = Twist()
+                self.move_publisher.publish(twist)
+
+    def move_timer_callback(self):
+        twist = Twist()
+
+        if self.move_state == "forward":
+            twist.linear.x = 0.1
+            twist.angular.z = self.turn
+        else:
+            self.get_logger().info("Stopped.")
+
+        self.move_publisher.publish(twist)
 
     def signal_handler(self, sig, frame):
         # signal handler to catch Ctrl+C and Ctrl+Z and close all cv2 windows
@@ -32,36 +77,48 @@ class MineSweeper(Node):
         sys.exit(0)
 
     def image_callback(self, msg):
-        signal.signal(signal.SIGINT, self.signal_handler) #Ctrl+C
-        signal.signal(signal.SIGTSTP, self.signal_handler) #Ctrl+Z
+        # signal.signal(signal.SIGINT, self.signal_handler)  # Ctrl+C
+        # signal.signal(signal.SIGTSTP, self.signal_handler)  # Ctrl+Z
         # self.get_logger().info('I heard: "%s"' % msg.data)
 
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        self.detect_line_prob(img)
+        # self.detect_line_prob(img)
 
         (numLabels, labels, stats, centroids) = self.detect_balls(img)
 
         for i in range(1, numLabels):
             x, y = centroids[i]
-            if not math.isnan(x) and not math.isnan(y): #avoids nan's
+            if not math.isnan(x) and not math.isnan(y):  # avoids nan's
                 x = int(x)
                 y = int(y)
-                cv2.circle(img, (x ,y), 2, (255, 0, 0), 2)
-    
+                cv2.circle(img, (x, y), 2, (255, 0, 0), 2)
+
+        if len(centroids) > 1:  # tracking a ball
+            # find the lowest y-value of the centroids
+            lowest_idx = np.argmax(centroids[1:, 1]) + 1
+            lowest_centroid = centroids[lowest_idx]
+
+            x_mid = img.shape[1] / 2
+            x_diff = x_mid - lowest_centroid[0]
+            self.turn = x_diff / img.shape[1] * TURN_POWER
+            self.turn = max(min(self.turn, TURN_MAX), -TURN_MAX)
+        else:
+            self.turn = 0.0
+
+        self.get_logger().info('Turn: "%s"' % self.turn)
+
         cv2.imshow("Image", img)
 
     def detect_balls(self, img):
         img = cv2.GaussianBlur(img, (15, 15), 3)
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         self.detect_lines(hsv)
-        
 
         cv2.imshow("HSV", hsv)
 
         yellowLower = (25, 100, 100)
         yellowUpper = (80, 255, 255)
-        
-        
+
         mask = cv2.inRange(hsv, yellowLower, yellowUpper)
         mask = cv2.erode(mask, None, iterations=2)
         mask = cv2.dilate(mask, None, iterations=2)
@@ -103,10 +160,11 @@ class MineSweeper(Node):
         edges = cv2.Canny(mask, threshold1=100, threshold2=150)
         cv2.imshow('Canny', edges)
 
-        lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=70, minLineLength=65, maxLineGap=25)
+        lines = cv2.HoughLinesP(
+            edges, rho=1, theta=np.pi/180, threshold=70, minLineLength=65, maxLineGap=25)
 
         img_copy = img.copy()
-        
+
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
