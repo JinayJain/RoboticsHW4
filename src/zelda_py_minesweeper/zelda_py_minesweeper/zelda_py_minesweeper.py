@@ -19,6 +19,8 @@ TURNING_POWER = .7
 MAX_POWER = 1
 STOP_INTERVAL = 2.5
 
+DO_MOVE = False
+
 
 class MineSweeper(Node):
 
@@ -61,34 +63,29 @@ class MineSweeper(Node):
 
         (numLabels, labels, stats, centroids) = self.detect_balls(img)
 
-        maxIdx = 0
-        maxY = 0
-        for i in range(1, numLabels):
-            x, y = centroids[i]
-            if not math.isnan(x) and not math.isnan(y):  # avoids nan's
-                x = int(x)
-                y = int(y)
-                cv2.circle(img, (x, y), 2, (255, 0, 0), 2)
-                if maxY < y:
-                    maxIdx = i
-                    maxY = y
+        if numLabels > 1:
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            maxIdx = np.argmax(areas) + 1
+            trackedCentroid = centroids[maxIdx]
 
-        x, y = centroids[maxIdx]
+            # draw the detected centroid on the image
+            (x, y) = trackedCentroid
+            cv2.circle(img, (int(x), int(y)), 4, (0, 0, 255), -1)
 
-        if (numLabels > 1):
-            self.move_state = "forward"
-        elif numLabels == 1:
+        # if (numLabels > 1):
+        #     self.move_state = "forward"
+        # elif numLabels == 1:
 
-            self.stop_timer = self.create_timer(
-                STOP_INTERVAL,
-                self.stop_timer_callback
-            )
+        #     self.stop_timer = self.create_timer(
+        #         STOP_INTERVAL,
+        #         self.stop_timer_callback
+        #     )
 
-        power = (-x + img.shape[1]/2)/(img.shape[1]/2)
-        self.slight_turn = min(
-            max(power * TURNING_POWER, -MAX_POWER), MAX_POWER)
+        # power = (-x + img.shape[1]/2)/(img.shape[1]/2)
+        # self.slight_turn = min(
+        #     max(power * TURNING_POWER, -MAX_POWER), MAX_POWER)
 
-        self.get_logger().info(f"x {x} y {y}, turn {power}")
+        # self.get_logger().info(f"x {x} y {y}, turn {power}")
 
         cv2.imshow("Image", img)
 
@@ -107,16 +104,17 @@ class MineSweeper(Node):
         elif self.move_state == "searching":
             twist.angular.z = self.slight_turn
 
-        self.move_publisher.publish(twist)
+        if DO_MOVE:
+            self.move_publisher.publish(twist)
 
     def detect_balls(self, img):
-        # img = cv2.GaussianBlur(img, (15, 15), 3)
+        # img = cv2.GaussianBlur(img, (9, 9), 0)
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         self.detect_lines(hsv)
 
         cv2.imshow("HSV", hsv)
 
-        yellowLower = (25, 100, 100)
+        yellowLower = (25, 50, 100)
         yellowUpper = (80, 255, 255)
 
         mask = cv2.inRange(hsv, yellowLower, yellowUpper)
