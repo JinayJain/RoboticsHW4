@@ -46,7 +46,6 @@ class MineSweeper(Node):
 
         self.move_state = "searching"
         self.slight_turn = 1.0
-        self.ball_disappear = False
 
     def signal_handler(self, sig, frame):
         # signal handler to catch Ctrl+C and Ctrl+Z and close all cv2 windows
@@ -63,23 +62,38 @@ class MineSweeper(Node):
 
         (numLabels, labels, stats, centroids) = self.detect_balls(img)
 
+
+        self.numLabels = numLabels
+        maxIdx = 0
+        maxY = 0
+        for i in range(1, numLabels):
+            x, y = centroids[i]
+            if not math.isnan(x) and not math.isnan(y): #avoids nan's
+                x = int(x)
+                y = int(y)
+                cv2.circle(img, (x ,y), 2, (255, 0, 0), 2)
+                if maxY < y:
+                    maxIdx = i
+                    maxY = y
+
         if numLabels > 1:
             areas = stats[1:, cv2.CC_STAT_AREA]
             maxIdx = np.argmax(areas) + 1
             trackedCentroid = centroids[maxIdx]
 
+
             # draw the detected centroid on the image
             (x, y) = trackedCentroid
             cv2.circle(img, (int(x), int(y)), 4, (0, 0, 255), -1)
 
-        # if (numLabels > 1):
-        #     self.move_state = "forward"
-        # elif numLabels == 1:
+        if (numLabels > 1):
+            self.move_state = "forward"
+        elif numLabels == 1:
+            self.stop_timer = self.create_timer(
+                STOP_INTERVAL,
+                self.stop_timer_callback
+            )
 
-        #     self.stop_timer = self.create_timer(
-        #         STOP_INTERVAL,
-        #         self.stop_timer_callback
-        #     )
 
         # power = (-x + img.shape[1]/2)/(img.shape[1]/2)
         # self.slight_turn = min(
@@ -90,7 +104,8 @@ class MineSweeper(Node):
         cv2.imshow("Image", img)
 
     def stop_timer_callback(self):
-        self.move_state = "searching"
+        if self.numLabels == 1:
+            self.move_state = "searching"
         self.stop_timer.destroy()
 
     def move_timer_callback(self):
