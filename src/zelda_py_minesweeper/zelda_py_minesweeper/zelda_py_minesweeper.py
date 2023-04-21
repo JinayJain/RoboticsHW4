@@ -4,17 +4,23 @@ import rclpy
 from rclpy import qos
 
 from sensor_msgs.msg import Image
+from geometry_msgs.msg import Twist
+from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector
 from cv_bridge import CvBridge
 
 import cv2
 import math
 import numpy as np
-import signal, sys
+import signal
+import sys
 from geometry_msgs.msg import Twist
 TIMER_INTERVAL = 0.1
 TURNING_POWER = .7
 MAX_POWER = 1
 STOP_INTERVAL = 2.5
+
+DO_MOVE = False
+
 
 class MineSweeper(Node):
 
@@ -28,6 +34,7 @@ class MineSweeper(Node):
             self.image_callback,
             qos.qos_profile_sensor_data
         )
+        self.camera_subscription  # prevent unused variable warning
 
         self.move_publisher = self.create_publisher(Twist, 'zelda/cmd_vel', 10)
         self.move_timer = self.create_timer(
@@ -39,23 +46,22 @@ class MineSweeper(Node):
 
         self.move_state = "searching"
         self.slight_turn = 1.0
-        
-
 
     def signal_handler(self, sig, frame):
         # signal handler to catch Ctrl+C and Ctrl+Z and close all cv2 windows
-        #cv2.destroyAllWindows()
+        # cv2.destroyAllWindows()
         sys.exit(0)
 
     def image_callback(self, msg):
-        signal.signal(signal.SIGINT, self.signal_handler) #Ctrl+C
-        signal.signal(signal.SIGTSTP, self.signal_handler) #Ctrl+Z
+        # signal.signal(signal.SIGINT, self.signal_handler)  # Ctrl+C
+        # signal.signal(signal.SIGTSTP, self.signal_handler)  # Ctrl+Z
         # self.get_logger().info('I heard: "%s"' % msg.data)
 
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        #self.detect_line_prob(img)
+        # self.detect_line_prob(img)
 
         (numLabels, labels, stats, centroids) = self.detect_balls(img)
+
 
         self.numLabels = numLabels
         maxIdx = 0
@@ -70,8 +76,15 @@ class MineSweeper(Node):
                     maxIdx = i
                     maxY = y
 
-        x,y = centroids[maxIdx]
-        
+        if numLabels > 1:
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            maxIdx = np.argmax(areas) + 1
+            trackedCentroid = centroids[maxIdx]
+
+
+            # draw the detected centroid on the image
+            (x, y) = trackedCentroid
+            cv2.circle(img, (int(x), int(y)), 4, (0, 0, 255), -1)
 
         if (numLabels > 1):
             self.move_state = "forward"
@@ -81,21 +94,19 @@ class MineSweeper(Node):
                 self.stop_timer_callback
             )
 
-        power = (-x + img.shape[1]/2)/(img.shape[1]/2)
-        self.slight_turn = min(max(power * TURNING_POWER, -MAX_POWER), MAX_POWER)
 
-        self.get_logger().info(f"x {x} y {y}, turn {power}")
+        # power = (-x + img.shape[1]/2)/(img.shape[1]/2)
+        # self.slight_turn = min(
+        #     max(power * TURNING_POWER, -MAX_POWER), MAX_POWER)
+
+        # self.get_logger().info(f"x {x} y {y}, turn {power}")
 
         cv2.imshow("Image", img)
 
-
-    
     def stop_timer_callback(self):
         if self.numLabels == 1:
             self.move_state = "searching"
         self.stop_timer.destroy()
-
-
 
     def move_timer_callback(self):
         twist = Twist()
@@ -108,25 +119,22 @@ class MineSweeper(Node):
         elif self.move_state == "searching":
             twist.angular.z = self.slight_turn
 
-        self.move_publisher.publish(twist)
-
+        if DO_MOVE:
+            self.move_publisher.publish(twist)
 
     def detect_balls(self, img):
-        #img = cv2.GaussianBlur(img, (15, 15), 3)
+        # img = cv2.GaussianBlur(img, (9, 9), 0)
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         self.detect_lines(hsv)
-        
 
         cv2.imshow("HSV", hsv)
 
-        yellowLower = (25, 100, 100)
+        yellowLower = (25, 50, 100)
         yellowUpper = (80, 255, 255)
-        
-        
-        mask = cv2.inRange(hsv, yellowLower, yellowUpper)
-        #mask = cv2.erode(mask, None, iterations=2)
-        #mask = cv2.dilate(mask, None, iterations=2)
 
+        mask = cv2.inRange(hsv, yellowLower, yellowUpper)
+        # mask = cv2.erode(mask, None, iterations=2)
+        # mask = cv2.dilate(mask, None, iterations=2)
 
         cv2.imshow("ball image", mask)
 
@@ -167,10 +175,11 @@ class MineSweeper(Node):
         edges = cv2.Canny(mask, threshold1=100, threshold2=150)
         cv2.imshow('Canny', edges)
 
-        lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=70, minLineLength=65, maxLineGap=25)
+        lines = cv2.HoughLinesP(
+            edges, rho=1, theta=np.pi/180, threshold=70, minLineLength=65, maxLineGap=25)
 
         img_copy = img.copy()
-        
+
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
