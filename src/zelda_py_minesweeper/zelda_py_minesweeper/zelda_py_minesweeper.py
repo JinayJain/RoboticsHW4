@@ -39,7 +39,6 @@ class MineSweeper(Node):
 
         self.move_state = "searching"
         self.slight_turn = 1.0
-        self.ball_disappear = False
         
 
 
@@ -58,6 +57,7 @@ class MineSweeper(Node):
 
         (numLabels, labels, stats, centroids) = self.detect_balls(img)
 
+        self.numLabels = numLabels
         maxIdx = 0
         maxY = 0
         for i in range(1, numLabels):
@@ -76,7 +76,6 @@ class MineSweeper(Node):
         if (numLabels > 1):
             self.move_state = "forward"
         elif numLabels == 1:
-
             self.stop_timer = self.create_timer(
                 STOP_INTERVAL,
                 self.stop_timer_callback
@@ -92,7 +91,8 @@ class MineSweeper(Node):
 
     
     def stop_timer_callback(self):
-        self.move_state = "searching"
+        if self.numLabels == 1:
+            self.move_state = "searching"
         self.stop_timer.destroy()
 
 
