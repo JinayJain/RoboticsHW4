@@ -49,12 +49,12 @@ class MineSweeper(Node):
 
     def signal_handler(self, sig, frame):
         # signal handler to catch Ctrl+C and Ctrl+Z and close all cv2 windows
-        # cv2.destroyAllWindows()
+        cv2.destroyAllWindows()
         sys.exit(0)
 
     def image_callback(self, msg):
-        # signal.signal(signal.SIGINT, self.signal_handler)  # Ctrl+C
-        # signal.signal(signal.SIGTSTP, self.signal_handler)  # Ctrl+Z
+        signal.signal(signal.SIGINT, self.signal_handler)  # Ctrl+C
+        signal.signal(signal.SIGTSTP, self.signal_handler)  # Ctrl+Z
         # self.get_logger().info('I heard: "%s"' % msg.data)
 
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -95,11 +95,11 @@ class MineSweeper(Node):
             )
 
 
-        # power = (-x + img.shape[1]/2)/(img.shape[1]/2)
-        # self.slight_turn = min(
-        #     max(power * TURNING_POWER, -MAX_POWER), MAX_POWER)
+        power = (-x + img.shape[1]/2)/(img.shape[1]/2)
+        self.slight_turn = min(
+            max(power * TURNING_POWER, -MAX_POWER), MAX_POWER)
 
-        # self.get_logger().info(f"x {x} y {y}, turn {power}")
+        self.get_logger().info(f"x {x} y {y}, turn {power}")
 
         cv2.imshow("Image", img)
 
