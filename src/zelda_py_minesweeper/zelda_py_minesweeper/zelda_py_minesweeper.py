@@ -4,7 +4,8 @@ import rclpy
 from rclpy import qos
 
 from sensor_msgs.msg import Image
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Point, Quaternion
+from nav_msgs.msg import Odometry
 from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector
 from cv_bridge import CvBridge
 
@@ -19,7 +20,46 @@ TURNING_POWER = .7
 MAX_POWER = 1
 STOP_INTERVAL = 2.5
 
-DO_MOVE = False
+# DO_MOVE = False
+DO_MOVE = True
+
+TARGET_POSITION = np.array([1.0, 1.0, 0.0])
+ANGLE_TOLERANCE_DEG = 5.0
+POSITION_TOLERANCE = 0.1
+
+
+def to_np(p: Point):
+    return np.array([p.x, p.y, p.z])
+
+
+# Taken from: https://gist.github.com/salmagro/2e698ad4fbf9dae40244769c5ab74434
+def euler_from_quaternion(quaternion: Quaternion):
+    """
+    Converts quaternion (w in last place) to euler roll, pitch, yaw
+    quaternion = [x, y, z, w]
+    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
+    """
+    x = quaternion.x
+    y = quaternion.y
+    z = quaternion.z
+    w = quaternion.w
+
+    sinr_cosp = 2 * (w * x + y * z)
+    cosr_cosp = 1 - 2 * (x * x + y * y)
+    roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+    sinp = 2 * (w * y - z * x)
+    pitch = np.arcsin(sinp)
+
+    siny_cosp = 2 * (w * z + x * y)
+    cosy_cosp = 1 - 2 * (y * y + z * z)
+    yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+    return np.array([roll, pitch, yaw])
+
+
+def prop(error, k, max_power):
+    return np.clip(error * k, -max_power, max_power)
 
 
 class MineSweeper(Node):
@@ -28,13 +68,13 @@ class MineSweeper(Node):
         super().__init__('minesweeper')
         self.bridge = CvBridge()
 
-        self.camera_subscription = self.create_subscription(
-            Image,
-            '/camera/color/image_raw',
-            self.image_callback,
-            qos.qos_profile_sensor_data
-        )
-        self.camera_subscription  # prevent unused variable warning
+        # self.camera_subscription = self.create_subscription(
+        #     Image,
+        #     '/camera/color/image_raw',
+        #     self.image_callback,
+        #     qos.qos_profile_sensor_data
+        # )
+        # self.camera_subscription  # prevent unused variable warning
 
         self.move_publisher = self.create_publisher(Twist, 'zelda/cmd_vel', 10)
         self.move_timer = self.create_timer(
@@ -42,10 +82,64 @@ class MineSweeper(Node):
             self.move_timer_callback
         )
 
+        self.odom_subscription = self.create_subscription(
+            Odometry,
+            'zelda/odom',
+            self.odom_callback,
+            qos.qos_profile_sensor_data
+        )
+        self.odom_subscription
+
         self.stop_timer = None
 
-        self.move_state = "searching"
+        self.move_state = "orient"
         self.slight_turn = 1.0
+        self.forward_vel = 0.0
+
+        # Odometry
+        self.base_position = None
+        self.base_orientation = None
+        self.position = None
+        self.orientation = None
+
+    def odom_callback(self, odom: Odometry):
+        raw_position = to_np(odom.pose.pose.position)
+        raw_orientation = euler_from_quaternion(odom.pose.pose.orientation)
+
+        if self.base_position is None:
+            self.base_position = raw_position
+
+        if self.base_orientation is None:
+            self.base_orientation = raw_orientation
+
+        self.position = raw_position - self.base_position
+        self.orientation = raw_orientation - self.base_orientation
+
+        print(f"Position {self.position}")
+
+        desired_angle = math.atan2(
+            TARGET_POSITION[1] - self.position[1],
+            TARGET_POSITION[0] - self.position[0]
+        )
+
+        angle_diff = desired_angle - self.orientation[2]
+
+        if self.move_state == "orient":
+            if abs(angle_diff) < math.radians(ANGLE_TOLERANCE_DEG):
+                self.move_state = "move"
+                self.start_pos = self.position
+                self.move_dist = np.linalg.norm(
+                    TARGET_POSITION - self.position)
+            else:
+                self.slight_turn = prop(angle_diff, 1.0, 1.0)
+
+        if self.move_state == "move":
+            dist = np.linalg.norm(self.position - self.start_pos)
+            if dist > self.move_dist:
+                self.move_state = "stop"
+                self.forward_vel = 0.0
+            else:
+                self.forward_vel = prop(self.move_dist - dist, 1.0, 0.2)
 
     def signal_handler(self, sig, frame):
         # signal handler to catch Ctrl+C and Ctrl+Z and close all cv2 windows
@@ -62,16 +156,15 @@ class MineSweeper(Node):
 
         (numLabels, labels, stats, centroids) = self.detect_balls(img)
 
-
         self.numLabels = numLabels
         maxIdx = 0
         maxY = 0
         for i in range(1, numLabels):
             x, y = centroids[i]
-            if not math.isnan(x) and not math.isnan(y): #avoids nan's
+            if not math.isnan(x) and not math.isnan(y):  # avoids nan's
                 x = int(x)
                 y = int(y)
-                cv2.circle(img, (x ,y), 2, (255, 0, 0), 2)
+                cv2.circle(img, (x, y), 2, (255, 0, 0), 2)
                 if maxY < y:
                     maxIdx = i
                     maxY = y
@@ -80,7 +173,6 @@ class MineSweeper(Node):
             areas = stats[1:, cv2.CC_STAT_AREA]
             maxIdx = np.argmax(areas) + 1
             trackedCentroid = centroids[maxIdx]
-
 
             # draw the detected centroid on the image
             (x, y) = trackedCentroid
@@ -94,12 +186,12 @@ class MineSweeper(Node):
                 self.stop_timer_callback
             )
 
-
+        x, y = centroids[maxIdx]
         power = (-x + img.shape[1]/2)/(img.shape[1]/2)
         self.slight_turn = min(
             max(power * TURNING_POWER, -MAX_POWER), MAX_POWER)
 
-        self.get_logger().info(f"x {x} y {y}, turn {power}")
+        # self.get_logger().info(f"x {x} y {y}, turn {power}")
 
         cv2.imshow("Image", img)
 
@@ -111,13 +203,18 @@ class MineSweeper(Node):
     def move_timer_callback(self):
         twist = Twist()
 
-        self.get_logger().info(f"moving {self.move_state}")
+        # self.get_logger().info(f"moving {self.move_state}")
 
         if self.move_state == "forward":
             twist.linear.x = .05
             twist.angular.z = self.slight_turn
         elif self.move_state == "searching":
             twist.angular.z = self.slight_turn
+        elif self.move_state == "orient":
+            twist.angular.z = self.slight_turn
+        elif self.move_state == "move":
+            twist.linear.x = self.forward_vel
+            # twist.angular.z = self.slight_turn
 
         if DO_MOVE:
             self.move_publisher.publish(twist)
